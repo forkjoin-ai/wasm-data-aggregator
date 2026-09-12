@@ -20,7 +20,7 @@
       "executor": "a0:run-commands",
       "options": {
         "cwd": "open-source/wasm-data-aggregator",
-        "command": "bun run test"
+        "command": "cargo test"
       }
     }
   }

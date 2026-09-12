@@ -38,6 +38,28 @@ pub struct AggregationResult {
     pub count: usize,
 }
 
+/// Fallback JSON when an `AggregationResult` cannot be serialized.
+const EMPTY_AGGREGATION_JSON: &str =
+    "{\"sum\":0,\"average\":0,\"weightedAverage\":0,\"min\":0,\"max\":0,\"count\":0}";
+
+impl AggregationResult {
+    /// Result for an empty (or unparseable) observation set.
+    pub fn empty() -> Self {
+        AggregationResult {
+            sum: 0.0,
+            average: 0.0,
+            weighted_average: 0.0,
+            min: 0.0,
+            max: 0.0,
+            count: 0,
+        }
+    }
+
+    fn to_json(&self) -> String {
+        serde_json::to_string(self).unwrap_or_else(|_| EMPTY_AGGREGATION_JSON.to_string())
+    }
+}
+
 /// Filter observations by date range and apply exponential decay aggregation
 /// 
 /// # Arguments
@@ -56,46 +78,37 @@ pub fn aggregate_with_decay(
     // Parse JSON input
     let observations: Vec<Observation> = match serde_json::from_str(observations_json) {
         Ok(obs) => obs,
-        Err(_) => {
-            return serde_json::to_string(&AggregationResult {
-                sum: 0.0,
-                average: 0.0,
-                weighted_average: 0.0,
-                min: 0.0,
-                max: 0.0,
-                count: 0,
-            })
-            .unwrap_or_else(|_| "{\"sum\":0,\"average\":0,\"weightedAverage\":0,\"min\":0,\"max\":0,\"count\":0}".to_string());
-        }
+        Err(_) => return AggregationResult::empty().to_json(),
     };
 
+    decay_weighted_aggregation(&observations, time_window_ms, current_time_ms).to_json()
+}
+
+/// Sum/average/min/max plus an average weighted by exponential decay of each
+/// observation's age relative to `current_time_ms`.
+fn decay_weighted_aggregation(
+    observations: &[Observation],
+    time_window_ms: f64,
+    current_time_ms: u64,
+) -> AggregationResult {
     if observations.is_empty() {
-        return serde_json::to_string(&AggregationResult {
-            sum: 0.0,
-            average: 0.0,
-            weighted_average: 0.0,
-            min: 0.0,
-            max: 0.0,
-            count: 0,
-        })
-        .unwrap_or_else(|_| "{\"sum\":0,\"average\":0,\"weightedAverage\":0,\"min\":0,\"max\":0,\"count\":0}".to_string());
+        return AggregationResult::empty();
     }
 
-    // Calculate exponential decay weights
     let mut weighted_sum = 0.0;
     let mut weight_sum = 0.0;
     let mut sum = 0.0;
     let mut min = observations[0].value;
     let mut max = observations[0].value;
 
-    for obs in &observations {
+    for obs in observations {
         let age = (current_time_ms as f64) - (obs.timestamp as f64);
         let weight = calculate_decay_weight(age, time_window_ms);
-        
+
         weighted_sum += obs.value * weight;
         weight_sum += weight;
         sum += obs.value;
-        
+
         if obs.value < min {
             min = obs.value;
         }
@@ -108,16 +121,14 @@ pub fn aggregate_with_decay(
     let average = if count > 0 { sum / count as f64 } else { 0.0 };
     let weighted_average = if weight_sum > 0.0 { weighted_sum / weight_sum } else { 0.0 };
 
-    let result = AggregationResult {
+    AggregationResult {
         sum,
         average,
         weighted_average,
         min,
         max,
         count,
-    };
-
-    serde_json::to_string(&result).unwrap_or_else(|_| "{\"sum\":0,\"average\":0,\"weightedAverage\":0,\"min\":0,\"max\":0,\"count\":0}".to_string())
+    }
 }
 
 /// Filter and aggregate observations by multiple dimensions
@@ -214,41 +225,39 @@ pub fn calculate_daily_metrics(
     let start_ts = date_range.get("startTimestamp").copied().unwrap_or(0);
     let end_ts = date_range.get("endTimestamp").copied().unwrap_or(u64::MAX);
 
-    // Filter to date range
-    let filtered: Vec<&Observation> = observations
+    // Group in-range observations by day (ms / MS_PER_DAY)
+    let mut daily: HashMap<u64, Vec<f64>> = HashMap::new();
+    for obs in observations
         .iter()
         .filter(|obs| obs.timestamp >= start_ts && obs.timestamp <= end_ts)
-        .collect();
-
-    // Group by day (ms / 86_400_000)
-    const MS_PER_DAY: u64 = 86_400_000;
-    let mut daily: HashMap<u64, Vec<f64>> = HashMap::new();
-    for obs in &filtered {
-        let day = obs.timestamp / MS_PER_DAY;
-        daily.entry(day).or_insert_with(Vec::new).push(obs.value);
+    {
+        daily.entry(obs.timestamp / MS_PER_DAY).or_insert_with(Vec::new).push(obs.value);
     }
 
-    // Aggregate each day
-    let mut result: HashMap<String, DailyMetric> = HashMap::new();
-    for (day, values) in &daily {
+    let result: HashMap<String, DailyMetric> = daily
+        .iter()
+        .map(|(day, values)| (format!("day-{}", day), DailyMetric::from_values(*day, values)))
+        .collect();
+
+    serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string())
+}
+
+const MS_PER_DAY: u64 = 86_400_000;
+
+impl DailyMetric {
+    /// Summarize one day's values; `day` is the day index since the Unix epoch.
+    fn from_values(day: u64, values: &[f64]) -> Self {
         let count = values.len();
         let sum: f64 = values.iter().sum();
-        let min = values.iter().cloned().fold(f64::INFINITY, f64::min);
-        let max = values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-        let average = if count > 0 { sum / count as f64 } else { 0.0 };
-
-        let day_key = format!("day-{}", day);
-        result.insert(day_key, DailyMetric {
+        DailyMetric {
             date: format!("{}", day * MS_PER_DAY),
             count,
             sum,
-            average,
-            min,
-            max,
-        });
+            average: if count > 0 { sum / count as f64 } else { 0.0 },
+            min: values.iter().cloned().fold(f64::INFINITY, f64::min),
+            max: values.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
+        }
     }
-
-    serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string())
 }
 
 #[cfg(test)]
