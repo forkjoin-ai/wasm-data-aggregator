@@ -4,14 +4,7 @@ use std::collections::HashMap;
 /// Aggregate observations into a single result
 pub fn aggregate_observations<'a>(observations: &'a [&'a Observation]) -> AggregationResult {
     if observations.is_empty() {
-        return AggregationResult {
-            sum: 0.0,
-            average: 0.0,
-            weighted_average: 0.0,
-            min: 0.0,
-            max: 0.0,
-            count: 0,
-        };
+        return AggregationResult::empty();
     }
 
     let mut sum = 0.0;

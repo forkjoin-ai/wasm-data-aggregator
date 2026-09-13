@@ -1,5 +1,9 @@
 # @affectively/wasm-data-aggregator
 
+## Purpose, architecture, interface, operations, and failure boundaries
+
+The purpose of this WASM architecture is deterministic bounded aggregation. Input schemas, output schemas, memory ceilings, and aggregation configuration form the contract. Test empty, malformed, large, and non-finite datasets. Allocation or decode failure rejects rather than emits a partial aggregate. Datasets are untrusted and results do not establish causation.
+
 High-performance WebAssembly data aggregation utilities written in Rust.
 
 [![npm](https://img.shields.io/npm/v/@affectively/wasm-data-aggregator.svg)](https://www.npmjs.com/package/@affectively/wasm-data-aggregator)

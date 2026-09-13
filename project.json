@@ -1,0 +1,27 @@
+{
+  "name": "@affectively/wasm-data-aggregator",
+  "sourceRoot": "open-source/wasm-data-aggregator/src",
+  "projectType": "library",
+  "tags": [
+    "npm:public"
+  ],
+  "targets": {
+    "build": {
+      "executor": "a0:run-commands",
+      "dependsOn": [
+        "^build"
+      ],
+      "options": {
+        "cwd": "open-source/wasm-data-aggregator",
+        "command": "bun run build"
+      }
+    },
+    "test": {
+      "executor": "a0:run-commands",
+      "options": {
+        "cwd": "open-source/wasm-data-aggregator",
+        "command": "cargo test"
+      }
+    }
+  }
+}
