@@ -13,7 +13,7 @@
       ],
       "options": {
         "cwd": "open-source/wasm-data-aggregator",
-        "command": "bun run build"
+        "command": "wasm-pack build --target web --out-dir pkg"
       }
     },
     "test": {
